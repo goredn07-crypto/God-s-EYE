@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>GOD'S EYE | Global Intelligence OS</title>
+    
+    <!-- Tailwind CSS (via CDN for zero-build environment) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet JS (Lightweight Mapping) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- JetBrains Mono Font -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;400;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        /* [OPT: PERFORMANCE] Simplified CSS variables. Heavy shadows and blurs minimized for i3 CPUs */
+        :root {
+            --color-primary: #00ff41; 
+            --color-alert: #ff003c;   
+            --color-warn: #ffea00;    
+            --color-cyan: #00e5ff;    
+            --bg-dark: #020202;
+            --panel-bg: rgba(5, 5, 5, 0.95); /* Opaque fallback for low-end GPUs */
+            --panel-border: rgba(0, 255, 65, 0.2);
+            --ui-accent: var(--color-primary);
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: var(--bg-dark);
+            color: var(--color-primary);
+            font-family: 'JetBrains Mono', monospace;
+            overflow: hidden;
+            user-select: none;
+            cursor: crosshair;
+        }
+
+        /* --- UI Panels --- */
+        .glass-panel {
+            background: var(--panel-bg);
+            /* [OPT: PERFORMANCE] Reduced blur from 16px to 4px. Drastically reduces GPU rasterization time */
+            backdrop-filter: blur(4px); 
+            -webkit-backdrop-filter: blur(4px);
+            border: 1px solid var(--panel-border);
+            position: relative;
+            will-change: transform, border-color; /* Hardware acceleration hint */
+            transition: border-color 0.3s ease;
+        }
+        
+        .glass-panel::before, .glass-panel::after {
+            content: ''; position: absolute; width: 10px; height: 10px; border: 2px solid var(--ui-accent); pointer-events: none; transition: border-color 0.3s;
+        }
+        .glass-panel::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+        .glass-panel::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+        /* Dynamic Threat States */
+        .state-critical { --ui-accent: var(--color-alert); --panel-border: rgba(255, 0, 60, 0.4); }
+        .state-elevated { --ui-accent: var(--color-warn); --panel-border: rgba(255, 234, 0, 0.4); }
+        .state-nominal { --ui-accent: var(--color-cyan); --panel-border: rgba(0, 229, 255, 0.4); }
+
+        /* Global Ticker */
+        .ticker-wrap {
+            width: 100%; overflow: hidden; background: #000; border-bottom: 1px solid var(--panel-border);
+            position: absolute; top: 0; z-index: 50; display: flex; align-items: center; padding: 4px 0;
+            will-change: transform;
+        }
+        .ticker-label { background: var(--color-primary); color: #000; padding: 2px 12px; font-weight: 800; font-size: 11px; z-index: 51; flex-shrink: 0; letter-spacing: 1px; }
+        .ticker-content { white-space: nowrap; animation: ticker 50s linear infinite; padding-left: 100%; display: inline-block; font-size: 11px; color: var(--color-primary); }
+        
+        /* [OPT: PERFORMANCE] Use 3D transforms for GPU hardware acceleration */
+        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-100%, 0, 0); } }
+
+        /* Map Engine Adjustments */
+        #map { position: absolute; inset: 0; z-index: 0; filter: contrast(1.2) brightness(0.7) sepia(0.2) hue-rotate(180deg); }
+        .leaflet-container { background: var(--bg-dark) !important; font-family: 'JetBrains Mono', monospace; cursor: crosshair !important; }
+        .leaflet-control-zoom { display: none; }
+        
+        /* Overlays & Cinematic Effects */
+        .scanlines {
+            position: fixed; inset: 0; pointer-events: none; z-index: 100; opacity: 0.1;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 4px, 3px 100%;
+        }
+
+        /* Utilities */
+        .text-neon { color: var(--ui-accent); text-shadow: 0 0 5px var(--ui-accent); transition: color 0.3s; }
+        .interactive-btn { 
+            border: 1px solid var(--color-primary); color: var(--color-primary); background: rgba(0, 255, 65, 0.05); 
+            transition: all 0.2s; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;
+        }
+        .interactive-btn:hover { background: var(--color-primary); color: #000; }
+        .interactive-btn:active { transform: scale(0.98); }
+
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--ui-accent); }
+
+        /* [OPT: UI/UX] Skeleton Loaders */
+        .skeleton { background: rgba(255,255,255,0.1); animation: skeleton-pulse 1.5s infinite; border-radius: 2px; }
+        @keyframes skeleton-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        
+        #boot-sequence {
+            position: fixed; inset: 0; background: var(--bg-dark); z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transition: opacity 0.8s ease-out;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- BOOT SEQUENCE -->
+    <div id="boot-sequence">
+        <svg class="w-16 h-16 text-[#00ff41] animate-spin mb-6" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <div id="boot-text" class="text-[#00ff41] text-sm tracking-[0.3em] font-bold">ESTABLISHING SECURE CONNECTION...</div>
+    </div>
+
+    <div class="scanlines"></div>
+
+    <!-- GLOBAL TICKER -->
+    <div class="ticker-wrap">
+        <div class="ticker-label" id="ticker-status">GLOBAL INTEL</div>
+        <div id="global-ticker" class="ticker-content">
+            AWAITING DECRYPTION OF GLOBAL SATELLITE CHATTER...
+        </div>
+    </div>
+
+    <!-- MAP ENGINE -->
+    <div id="map"></div>
+
+    <!-- UI LAYER -->
+    <div id="ui-layer" class="absolute inset-0 z-10 flex justify-between p-6 pt-16 pointer-events-none opacity-0 transition-opacity duration-1000">
+        
+        <!-- LEFT WING -->
+        <div class="w-[340px] flex flex-col gap-4 pointer-events-auto">
+            
+            <div class="glass-panel p-5 relative" id="panel-target">
+                <div class="absolute top-0 right-0 p-1 px-3 text-[10px] bg-[var(--ui-accent)] text-black font-bold tracking-widest transition-colors duration-300" id="lock-status">ORBITAL SCAN</div>
+                <div class="text-[10px] text-gray-400 border-b border-[var(--panel-border)] pb-1 tracking-widest transition-colors duration-300">TARGET ACQUISITION</div>
+                
+                <h1 id="country-name" class="text-3xl font-extrabold text-neon uppercase mt-4 leading-none min-h-[36px]">STANDBY</h1>
+                
+                <div class="mt-4 flex gap-2">
+                    <div class="flex-1 bg-black/80 p-2 border border-[var(--panel-border)] transition-colors duration-300">
+                        <div class="text-[8px] text-gray-500 mb-1">LATITUDE</div>
+                        <div id="lat-val" class="text-xs text-white">--.------</div>
+                    </div>
+                    <div class="flex-1 bg-black/80 p-2 border border-[var(--panel-border)] transition-colors duration-300">
+                        <div class="text-[8px] text-gray-500 mb-1">LONGITUDE</div>
+                        <div id="lng-val" class="text-xs text-white">--.------</div>
+                    </div>
+                </div>
+
+                <div class="mt-4 flex items-center justify-between border-t border-[var(--panel-border)] pt-3 transition-colors duration-300">
+                    <span class="text-[10px] text-gray-400 tracking-widest">THREAT MATRIX</span>
+                    <span id="threat-level" class="text-xs font-bold px-2 py-1 bg-black/50 border border-gray-700 text-gray-500">PENDING</span>
+                </div>
+            </div>
+
+            <div class="glass-panel p-5" id="panel-weather">
+                <div class="text-[10px] text-gray-400 border-b border-[var(--panel-border)] pb-1 tracking-widest transition-colors duration-300">ATMOSPHERICS</div>
+                <div class="flex flex-col gap-2 mt-3 text-xs font-mono">
+                    <div class="flex justify-between items-center"><span class="text-gray-500">SURFACE TEMP</span><span id="w-temp" class="text-white">--°C</span></div>
+                    <div class="flex justify-between items-center"><span class="text-gray-500">WIND KINETIC</span><span id="w-wind" class="text-[var(--ui-accent)] transition-colors">-- km/h</span></div>
+                    <div class="flex justify-between items-center"><span class="text-gray-500">CYCLE STATE</span><span id="w-desc" class="text-gray-300">STANDBY</span></div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-5">
+                <div class="text-[10px] text-gray-400 border-b border-[var(--panel-border)] pb-1 tracking-widest transition-colors duration-300">ECONOMIC BASELINE</div>
+                <div class="flex flex-col gap-2 mt-3 font-mono">
+                    <div class="flex justify-between items-center bg-black/60 p-2 border-l-2 border-[#00ff41]">
+                        <span class="text-xs text-gray-400">BTC/USD</span>
+                        <span id="mkt-btc" class="text-sm font-bold text-[#00ff41]"><div class="skeleton w-16 h-4"></div></span>
+                    </div>
+                    <div class="flex justify-between items-center bg-black/60 p-2 border-l-2 border-[#00ff41]">
+                        <span class="text-xs text-gray-400">ETH/USD</span>
+                        <span id="mkt-eth" class="text-sm font-bold text-[#00ff41]"><div class="skeleton w-16 h-4"></div></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT WING -->
+        <div class="w-[420px] flex flex-col gap-4 pointer-events-auto h-full pb-12">
+            <div class="flex justify-end gap-3">
+                <button onclick="MapSystem.resetUplink()" class="interactive-btn px-4 py-2 text-[10px] flex items-center gap-2" id="btn-reset">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    GLOBAL OVERRIDE
+                </button>
+            </div>
+
+            <div class="glass-panel p-5 h-full flex flex-col" id="panel-intel">
+                <div class="flex justify-between items-center border-b border-[var(--panel-border)] pb-2 mb-3 transition-colors duration-300">
+                    <div class="text-xs font-bold tracking-widest flex items-center gap-2 text-neon">
+                        <div class="w-2 h-2 bg-[var(--ui-accent)] rounded-full animate-pulse transition-colors"></div>
+                        COMMS INTERCEPT
+                    </div>
+                    <div class="text-[10px] text-gray-400 font-bold font-mono" id="intel-time">00:00:00Z</div>
+                </div>
+                
+                <div id="news-container" class="flex-1 overflow-y-auto pr-3 flex flex-col gap-3">
+                    <div class="flex h-full items-center justify-center flex-col text-center opacity-60">
+                        <svg class="w-12 h-12 text-[var(--ui-accent)] mb-3 transition-colors duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                        <div class="text-[11px] text-[var(--ui-accent)] tracking-widest transition-colors duration-300">SYSTEM NOMINAL.<br>CLICK REGION TO DECRYPT LOCAL COMMUNIQUÉS.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Tracker -->
+    <div class="absolute bottom-6 left-6 z-20 pointer-events-none flex flex-col gap-1">
+        <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-[#00ff41] animate-pulse"></div>
+            <div class="text-[10px] font-bold text-[#00ff41] tracking-widest">SAT-POS</div>
+        </div>
+        <div class="text-xs text-white font-mono bg-black/80 px-2 py-1 border border-[#00ff41]/30">
+            [ <span id="cursor-lat" class="text-[#00e5ff]">00.0000</span>, <span id="cursor-lng" class="text-[#00e5ff]">00.0000</span> ]
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ------------------------------------------------------------------------
+         * [ARCH: MODULAR OS] Centralized State & Configuration
+         * ------------------------------------------------------------------------
+         */
+        const AppState = {
+            isLocked: false,
+            currentTargetLayer: null,
+            GLOBAL_CENTER: [20, 0],
+            GLOBAL_ZOOM: 3
+        };
+
+        // [OPT: SECURITY] Simulated Environment Variables
+        // In a production build, these must remain on a secure Node.js proxy backend.
+        // Used here to allow the standalone HTML to function.
+        const ENV = {
+            FINNHUB_KEY: "d76e7dhr01qm4b7tupr0d76e7dhr01qm4b7tuprg",
+            GNEWS_KEY: "53cd6f6a1618fa19a8eb2bfb33c137e4"
+            // Note: Mediastack removed to enforce strict HTTPS and prevent mixed-content blocks
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [OPT: SECURITY] XSS Prevention & Data Sanitization Core
+         * ------------------------------------------------------------------------
+         */
+        const SecurityCore = {
+            sanitizeHTML(str) {
+                if(!str) return '';
+                const div = document.createElement('div');
+                div.appendChild(document.createTextNode(str));
+                return div.innerHTML; // Prevents <script> injection from news titles
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [OPT: RESILIENCE] Network Layer with Exponential Backoff & Caching
+         * ------------------------------------------------------------------------
+         */
+        const NetworkLayer = {
+            async fetchWithRetry(url, cacheKey, ttl = 300000, maxRetries = 3) { // Default TTL: 5 mins
+                // Check Cache First
+                const cached = localStorage.getItem(cacheKey);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (Date.now() - parsed.timestamp < ttl) {
+                        console.log(`[CACHE HIT] ${cacheKey}`);
+                        return parsed.data;
+                    }
+                }
+
+                // Execute with Retry
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(url);
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const data = await response.json();
+                        
+                        // Save to Cache
+                        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data }));
+                        return data;
+                    } catch (error) {
+                        console.warn(`[NETWORK ERR] Attempt ${i + 1} failed for ${cacheKey}`);
+                        if (i === maxRetries - 1) throw error;
+                        // Exponential backoff: 1s, 2s, 4s...
+                        await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+                    }
+                }
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [ARCH: INTELLIGENCE ENGINE] Weighted Threat Matrix
+         * ------------------------------------------------------------------------
+         */
+        const ThreatEngine = {
+            matrix: {
+                'nuclear': 5, 'war': 5, 'missile': 4, 'invasion': 4,
+                'attack': 3, 'strike': 3, 'terror': 3, 'dead': 3, 'kill': 3, 'casualty': 3,
+                'crisis': 2, 'tension': 2, 'military': 2, 'conflict': 2, 'riot': 2,
+                'protest': 1, 'warning': 1, 'threat': 1
+            },
+            
+            evaluate(articles) {
+                let score = 0;
+                articles.forEach(article => {
+                    const words = article.title.toLowerCase().split(/\W+/);
+                    words.forEach(w => {
+                        if (this.matrix[w]) score += this.matrix[w];
+                    });
+                });
+
+                if (score >= 8) return { level: 'critical', text: 'CRITICAL', color: '#ff003c' };
+                if (score >= 3) return { level: 'elevated', text: 'ELEVATED', color: '#ffea00' };
+                return { level: 'nominal', text: 'NOMINAL', color: '#00e5ff' };
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [ARCH: UI CONTROLLER] DOM Manipulation & Animations
+         * ------------------------------------------------------------------------
+         */
+        const UIController = {
+            setThreatState(level) {
+                const panels = ['panel-target', 'panel-weather', 'panel-intel'];
+                panels.forEach(id => {
+                    const el = document.getElementById(id);
+                    el.classList.remove('state-critical', 'state-elevated', 'state-nominal');
+                    el.classList.add(`state-${level}`);
+                });
+            },
+
+            // High-performance text scramble using requestAnimationFrame instead of setInterval
+            scrambleText(elementId, finalStr, duration = 500) {
+                const el = document.getElementById(elementId);
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+';
+                const startTime = performance.now();
+                
+                function update(currentTime) {
+                    const elapsed = currentTime - startTime;
+                    if (elapsed >= duration) {
+                        el.innerText = finalStr;
+                    } else {
+                        const progress = elapsed / duration;
+                        let tempStr = finalStr.split('').map((char, i) => {
+                            if (char === ' ' || char === '.' || char === '-') return char;
+                            return Math.random() < progress ? finalStr[i] : chars[Math.floor(Math.random() * chars.length)];
+                        }).join('');
+                        el.innerText = tempStr;
+                        requestAnimationFrame(update);
+                    }
+                }
+                requestAnimationFrame(update);
+            },
+
+            renderSkeletons(elementId, count) {
+                const container = document.getElementById(elementId);
+                let html = '';
+                for(let i=0; i<count; i++) {
+                    html += `<div class="p-3 border-l-4 border-gray-700 bg-black/40 text-[10px] flex flex-col gap-2">
+                                <div class="flex justify-between items-center border-b border-gray-700/50 pb-1">
+                                    <div class="skeleton w-12 h-3"></div><div class="skeleton w-16 h-3"></div>
+                                </div>
+                                <div class="skeleton w-full h-3"></div>
+                                <div class="skeleton w-3/4 h-3"></div>
+                             </div>`;
+                }
+                container.innerHTML = html;
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [ARCH: MAP ENGINE] Leaflet Instantiation & Event Handling
+         * ------------------------------------------------------------------------
+         */
+        const MapSystem = {
+            map: null,
+            geojsonLayer: null,
+
+            init() {
+                // [OPT: PERFORMANCE] Disable heavy Leaflet animations for smooth i3 performance
+                this.map = L.map('map', {
+                    center: AppState.GLOBAL_CENTER,
+                    zoom: AppState.GLOBAL_ZOOM,
+                    zoomControl: false,
+                    attributionControl: false,
+                    preferCanvas: true,
+                    zoomAnimation: false,
+                    fadeAnimation: false,
+                    markerZoomAnimation: false
+                });
+
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+                    subdomains: 'abcd', maxZoom: 10, minZoom: 2, updateWhenIdle: true
+                }).addTo(this.map);
+
+                // [OPT: PERFORMANCE] Throttle mousemove events to prevent layout thrashing
+                let lastMove = 0;
+                this.map.on('mousemove', (e) => {
+                    const now = performance.now();
+                    if (now - lastMove > 50) { // Max 20 calls per second
+                        document.getElementById('cursor-lat').innerText = e.latlng.lat.toFixed(4).padStart(8, ' ');
+                        document.getElementById('cursor-lng').innerText = e.latlng.lng.toFixed(4).padStart(8, ' ');
+                        lastMove = now;
+                    }
+                });
+
+                fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
+                    .then(res => res.json())
+                    .then(data => {
+                        this.geojsonLayer = L.geoJson(data, {
+                            style: { fillColor: 'transparent', weight: 1, opacity: 0.15, color: '#00ff41', fillOpacity: 0 },
+                            onEachFeature: (feature, layer) => {
+                                layer.on({
+                                    mouseover: (e) => {
+                                        if(AppState.currentTargetLayer !== layer) layer.setStyle({ color: '#00e5ff', weight: 2, fillOpacity: 0.1 });
+                                    },
+                                    mouseout: (e) => {
+                                        if(AppState.currentTargetLayer !== layer) this.geojsonLayer.resetStyle(layer);
+                                    },
+                                    click: (e) => this.executeTargetLock(feature, layer)
+                                });
+                            }
+                        }).addTo(this.map);
+                    });
+            },
+
+            executeTargetLock(feature, layer) {
+                if (AppState.currentTargetLayer) this.geojsonLayer.resetStyle(AppState.currentTargetLayer);
+                
+                AppState.currentTargetLayer = layer;
+                AppState.isLocked = true;
+                
+                layer.setStyle({ weight: 2, color: '#ffea00', fillOpacity: 0.15 });
+                layer.bringToFront();
+
+                const countryName = feature.properties.name;
+                const center = layer.getBounds().getCenter();
+
+                this.map.flyTo(center, Math.max(this.map.getZoom(), 5), { animate: true, duration: 1.2 });
+
+                // UI Updates
+                UIController.setThreatState('nominal');
+                document.getElementById('lock-status').innerText = "TARGET LOCKED";
+                document.getElementById('threat-level').innerHTML = '<span class="text-[#00e5ff] animate-pulse">ANALYZING...</span>';
+
+                UIController.scrambleText('country-name', countryName.toUpperCase());
+                UIController.scrambleText('lat-val', center.lat.toFixed(6));
+                UIController.scrambleText('lng-val', center.lng.toFixed(6));
+
+                APIManager.fetchWeather(center.lat, center.lng);
+                APIManager.fetchRegionalIntel(countryName);
+            },
+
+            resetUplink() {
+                if(!AppState.isLocked) return;
+                AppState.isLocked = false;
+                
+                if (AppState.currentTargetLayer) this.geojsonLayer.resetStyle(AppState.currentTargetLayer);
+                AppState.currentTargetLayer = null;
+
+                this.map.flyTo(AppState.GLOBAL_CENTER, AppState.GLOBAL_ZOOM, { animate: true, duration: 1.5 });
+                UIController.setThreatState('nominal');
+
+                document.getElementById('lock-status').innerText = "ORBITAL SCAN";
+                UIController.scrambleText('country-name', "STANDBY");
+                document.getElementById('lat-val').innerText = "--.------";
+                document.getElementById('lng-val').innerText = "--.------";
+                document.getElementById('threat-level').innerHTML = '<span class="text-gray-500">PENDING</span>';
+                
+                document.getElementById('w-temp').innerText = "--°C";
+                document.getElementById('w-wind').innerText = "-- km/h";
+                document.getElementById('w-desc').innerText = "STANDBY";
+
+                document.getElementById('news-container').innerHTML = `
+                    <div class="flex h-full items-center justify-center flex-col text-center opacity-60">
+                        <svg class="w-12 h-12 text-[var(--ui-accent)] mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                        <div class="text-[11px] text-[var(--ui-accent)] tracking-widest">SYSTEM NOMINAL.<br>CLICK REGION TO DECRYPT LOCAL COMMUNIQUÉS.</div>
+                    </div>`;
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [ARCH: DATA LAYER] API Management & Fallbacks
+         * ------------------------------------------------------------------------
+         */
+        const APIManager = {
+            async fetchWeather(lat, lng) {
+                document.getElementById('w-temp').innerHTML = '<span class="skeleton w-8 h-4 inline-block"></span>';
+                try {
+                    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`;
+                    const cacheKey = `weather_${Math.round(lat)}_${Math.round(lng)}`;
+                    const data = await NetworkLayer.fetchWithRetry(url, cacheKey, 600000); // 10 min cache
+                    
+                    if(data && data.current_weather) {
+                        const cw = data.current_weather;
+                        document.getElementById('w-temp').innerText = `${cw.temperature}°C`;
+                        document.getElementById('w-wind').innerText = `${cw.windspeed} km/h`;
+                        document.getElementById('w-desc').innerHTML = cw.is_day ? `<span class="text-yellow-400">SOLAR ACTIVE</span>` : `<span class="text-indigo-400">NIGHT CYCLE</span>`;
+                    }
+                } catch (err) {
+                    document.getElementById('w-temp').innerHTML = '<span class="text-red-500">ERR</span>';
+                }
+            },
+
+            async fetchRegionalIntel(country) {
+                const container = document.getElementById('news-container');
+                UIController.renderSkeletons('news-container', 3);
+                
+                try {
+                    const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(country)}&apikey=${ENV.GNEWS_KEY}&lang=en&max=6&sortby=relevance`;
+                    const data = await NetworkLayer.fetchWithRetry(url, `intel_${country}`, 300000); // 5 min cache
+                    
+                    if(data && data.articles && data.articles.length > 0) {
+                        // Threat Evaluation
+                        const threat = ThreatEngine.evaluate(data.articles);
+                        UIController.setThreatState(threat.level);
+                        
+                        const tlEl = document.getElementById('threat-level');
+                        tlEl.className = `text-[10px] font-bold px-2 py-1 bg-black/50 border border-[${threat.color}] text-[${threat.color}]`;
+                        if(threat.level === 'critical') tlEl.classList.add('animate-pulse');
+                        tlEl.innerText = threat.text;
+                        
+                        if(AppState.currentTargetLayer) AppState.currentTargetLayer.setStyle({ color: threat.color, fillColor: threat.color });
+
+                        // [OPT: PERFORMANCE] Batch DOM insertion using DocumentFragment
+                        const fragment = document.createDocumentFragment();
+                        
+                        data.articles.forEach(article => {
+                            const title = SecurityCore.sanitizeHTML(article.title.toUpperCase());
+                            const source = SecurityCore.sanitizeHTML(article.source.name.toUpperCase());
+                            
+                            const div = document.createElement('div');
+                            div.className = `p-3 border-l-4 border-l-[${threat.color}] bg-black/40 text-[10px] flex flex-col gap-2 hover:bg-black/60 transition-colors`;
+                            div.innerHTML = `
+                                <div class="flex justify-between items-center text-[9px] opacity-70 border-b border-gray-700/50 pb-1">
+                                    <span class="text-white font-bold bg-gray-800 px-1 rounded-sm">${source}</span>
+                                    <span>${new Date(article.publishedAt).toLocaleDateString()}</span>
+                                </div>
+                                <a href="${article.url}" target="_blank" class="text-[${threat.color}] font-bold hover:underline leading-relaxed">${title}</a>
+                            `;
+                            fragment.appendChild(div);
+                        });
+                        
+                        container.innerHTML = '';
+                        container.appendChild(fragment);
+
+                    } else {
+                        container.innerHTML = `<div class="text-[10px] text-gray-500 italic p-4 bg-black/50 text-center border border-gray-800">NO INTERCEPTED COMMUNIQUÉS.</div>`;
+                        document.getElementById('threat-level').innerText = "NOMINAL";
+                    }
+
+                } catch (err) {
+                    container.innerHTML = `<div class="text-xs text-[var(--color-alert)] p-4 bg-red-900/20 border border-red-800 text-center">[UPLINK FAILED] TARGET FIREWALL DETECTED.</div>`;
+                    document.getElementById('threat-level').innerText = "UNKNOWN";
+                }
+            },
+
+            async fetchGlobalTicker() {
+                const ticker = document.getElementById('global-ticker');
+                try {
+                    // [OPT: SECURITY] Replaced insecure HTTP Mediastack with secure HTTPS GNews endpoint
+                    const url = `https://gnews.io/api/v4/top-headlines?category=world&lang=en&apikey=${ENV.GNEWS_KEY}&max=5`;
+                    const data = await NetworkLayer.fetchWithRetry(url, 'global_ticker', 600000);
+                    
+                    if(data && data.articles) {
+                        const newsString = data.articles.map(n => SecurityCore.sanitizeHTML(n.title.toUpperCase())).join(' &nbsp; /// &nbsp; ');
+                        ticker.innerHTML = `[SECURE SATELLITE UPLINK ACTIVE] &nbsp;&nbsp; ${newsString}`;
+                    }
+                } catch(e) {
+                    ticker.innerHTML = `<span class="text-red-500">[CRITICAL] GLOBAL INTEL NODES UNREACHABLE. RETAINING LOCAL CACHE...</span>`;
+                }
+            },
+
+            async fetchMarkets() {
+                const updateTicker = (id, price, change) => {
+                    const el = document.getElementById(id);
+                    if (!price) { el.innerHTML = `<span class="text-red-500">ERR</span>`; return; }
+                    const color = change >= 0 ? 'text-[#00ff41]' : 'text-red-500';
+                    const arrow = change >= 0 ? '▲' : '▼';
+                    el.innerHTML = `<span class="${color}">${arrow} $${price.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}</span>`;
+                };
+
+                try {
+                    const urlBtc = `https://finnhub.io/api/v1/quote?symbol=BINANCE:BTCUSDT&token=${ENV.FINNHUB_KEY}`;
+                    const urlEth = `https://finnhub.io/api/v1/quote?symbol=BINANCE:ETHUSDT&token=${ENV.FINNHUB_KEY}`;
+                    
+                    // Fetch in parallel using NetworkLayer
+                    const [btc, eth] = await Promise.all([
+                        NetworkLayer.fetchWithRetry(urlBtc, 'mkt_btc', 60000), // 1 min cache for crypto
+                        NetworkLayer.fetchWithRetry(urlEth, 'mkt_eth', 60000)
+                    ]);
+
+                    updateTicker('mkt-btc', btc.c, btc.d);
+                    updateTicker('mkt-eth', eth.c, eth.d);
+                } catch (err) {
+                    document.getElementById('mkt-btc').innerText = "OFFLINE";
+                    document.getElementById('mkt-eth').innerText = "OFFLINE";
+                }
+            }
+        };
+
+        /**
+         * ------------------------------------------------------------------------
+         * [CORE] OS Initialization
+         * ------------------------------------------------------------------------
+         */
+        setInterval(() => {
+            document.getElementById('intel-time').innerText = new Date().toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+        }, 1000);
+
+        window.onload = () => {
+            setTimeout(() => { document.getElementById('boot-text').innerText = "DECRYPTING MAINFRAME..."; }, 600);
+            
+            setTimeout(() => {
+                document.getElementById('boot-sequence').style.opacity = '0';
+                MapSystem.init();
+                APIManager.fetchMarkets();
+                APIManager.fetchGlobalTicker();
+                
+                setTimeout(() => {
+                    document.getElementById('boot-sequence').style.display = 'none';
+                    document.getElementById('ui-layer').classList.remove('opacity-0');
+                }, 800);
+            }, 1200); // Sped up boot sequence slightly
+            
+            // Background polling
+            setInterval(() => APIManager.fetchMarkets(), 60000);
+        };
+    </script>
+</body>
+</html>
